@@ -1,0 +1,277 @@
+
+IF OBJECT_ID ('tempdb..#STATUS') IS NOT NULL drop table #STATUS
+
+
+DECLARE @PROCESSBEG DATE
+SET @PROCESSBEG = DATEADD(DAY, -14, CAST(GETDATE() AS DATE));
+DECLARE @PROCESSEND DATE
+SET @PROCESSEND = DATEADD(DAY, 0, CAST(GETDATE() AS DATE));
+WITH HRH AS 
+            (SELECT HIST.EMPLOYEE
+                        ,HIST.A_VALUE
+                        ,HIST.BEG_DATE
+                        ,HIST.DATE_STAMP
+                        ,HIST.TIME_STAMP
+                        ,ROW_NUMBER () OVER (PARTITION BY HIST.EMPLOYEE ORDER BY HIST.DATE_STAMP DESC, HIST.TIME_STAMP DESC) AS ROW_NUM
+
+            FROM INFORDWHR.dbo.INF_HRHISTORY HIST
+            WHERE HIST.FLD_NBR = '20'
+            AND HIST.DATE_STAMP <= @PROCESSEND)
+
+SELECT HRH.EMPLOYEE
+            ,RTRIM(EMP.FIRST_NAME) AS FIRST_NAME
+            ,RTRIM(EMP.LAST_NAME) AS LAST_NAME
+            ,RTRIM(EMP.EMAIL_ADDRESS) AS EMAIL
+            ,CONVERT(VARCHAR,EMP.DATE_HIRED,101) AS 'HIRE DATE'
+            ,CONVERT(VARCHAR,HRH2.BEG_DATE,101) as 'OLD_STATUS_EFF_DATE'
+    ,CASE WHEN HRH2.A_VALUE = 'F1' THEN 'FULL TIME'
+       WHEN HRH2.A_VALUE = 'F2' THEN 'FT TEMP'
+       WHEN HRH2.A_VALUE = 'P1' THEN 'PART TIME'
+       WHEN HRH2.A_VALUE = 'P2' THEN 'PTBE'
+       WHEN HRH2.A_VALUE = 'P3' THEN 'PT CASUAL'
+       WHEN HRH2.A_VALUE = 'P4' THEN 'PT TEMP'
+       WHEN HRH2.A_VALUE = 'P5' THEN 'PRN-HCR'
+       WHEN HRH2.A_VALUE = 'P6' THEN 'PT-HCR'
+       WHEN HRH2.A_VALUE = 'P7' THEN 'PTCA-HCR'
+       WHEN HRH2.A_VALUE = 'PR' THEN 'PRN'
+       WHEN HRH2.A_VALUE = 'PT' THEN 'PT TEMP'
+       WHEN HRH2.A_VALUE = 'W1' THEN 'WK OPT FT'
+       WHEN HRH2.A_VALUE = 'W2' THEN 'WEEKEND OPT'
+               WHEN HRH2.A_VALUE IN ('T1','T2','T3','T4','T5','T6','T7','T8','T9') THEN 'TERM PENDING'
+       ELSE HRH2.A_VALUE
+               END AS 'OLD_STATUS'
+            ,CASE WHEN HRH.A_VALUE = 'F1' THEN 'FULL TIME'
+       WHEN HRH.A_VALUE = 'F2' THEN 'FT TEMP'
+       WHEN HRH.A_VALUE = 'P1' THEN 'PART TIME'
+       WHEN HRH.A_VALUE = 'P2' THEN 'PTBE'
+       WHEN HRH.A_VALUE = 'P3' THEN 'PT CASUAL'
+       WHEN HRH.A_VALUE = 'P4' THEN 'PT TEMP'
+       WHEN HRH.A_VALUE = 'P5' THEN 'PRN-HCR'
+       WHEN HRH.A_VALUE = 'P6' THEN 'PT-HCR'
+       WHEN HRH.A_VALUE = 'P7' THEN 'PTCA-HCR'
+       WHEN HRH.A_VALUE = 'PR' THEN 'PRN'
+       WHEN HRH.A_VALUE = 'PT' THEN 'PT TEMP'
+       WHEN HRH.A_VALUE = 'W1' THEN 'WK OPT FT'
+       WHEN HRH.A_VALUE = 'W2' THEN 'WEEKEND OPT'
+       ELSE HRH.A_VALUE
+       END AS 'NEW_STATUS'
+            ,CONVERT(VARCHAR,HRH.BEG_DATE,101) as 'NEW_STATUS_EFF_DATE'
+     ,CONVERT(VARCHAR,HRH.DATE_STAMP,101) AS 'PROCESSED_DATE'
+
+INTO #STATUS
+
+FROM HRH
+
+
+INNER JOIN HRH HRH2
+ON HRH.EMPLOYEE = HRH2.EMPLOYEE
+AND HRH.DATE_STAMP >= @PROCESSBEG
+AND HRH.DATE_STAMP <= @PROCESSEND
+AND HRH2.ROW_NUM = 2
+AND HRH.ROW_NUM = 1
+AND HRH.A_VALUE NOT LIKE '[L]%'
+AND HRH2.A_VALUE NOT LIKE '[L]%'
+AND HRH.A_VALUE NOT LIKE  'T%'
+AND HRH.A_VALUE <> 'XX'
+AND HRH.A_VALUE <> 'PH'
+AND HRH2.A_VALUE <> 'PH'
+AND HRH.A_VALUE <> HRH2.A_VALUE
+
+
+
+INNER JOIN INFORDWHR.dbo.INF_EMPLOYEE_MASTER EMP
+ON HRH.EMPLOYEE = EMP.EMPLOYEE
+
+ORDER BY HRH.EMPLOYEE, HRH.BEG_DATE DESC
+
+SELECT 'Reset' as 'Transaction'
+,E.EMPLOYEE AS 'Person Number'
+,CONVERT(VARCHAR,E.DATE_HIRED,101) AS 'Effective Date'
+,'Take Care' AS 'Accrual Code'
+,CASE WHEN E.EMP_STATUS IN ('F1','L1','W1') THEN '8'
+ WHEN E.EMP_STATUS IN ('L2','L3','L4','L8','P1','P2','P6','W2') THEN '4'
+ END AS 'Amount'
+ ,'' AS 'Probation Amount'
+,E.DATE_HIRED
+,''  AS REHIRE
+,E.SCHEDULE AS JOB_FAMILY
+,E.EMP_STATUS AS CURRENT_STATUS
+,S.OLD_STATUS
+,S.NEW_STATUS
+,S.NEW_STATUS_EFF_DATE
+,CASE WHEN CONVERT(VARCHAR,E.TERM_DATE,101) = '01/01/1753' THEN ''
+ELSE CONVERT(VARCHAR,E.TERM_DATE,101)
+END AS TERM
+,CASE WHEN PR.HOURS IS NULL THEN 0
+ELSE PR.HOURS
+END AS TCH_HOURS
+,CASE WHEN CONVERT(VARCHAR,PR.CHECK_DATE,101) IS NULL THEN ''
+ELSE CONVERT(VARCHAR,PR.CHECK_DATE,101)
+END AS CHECK_DATE
+FROM INFORDWHR.dbo.INF_EMPLOYEE_MASTER E 
+INNER JOIN #STATUS S ON S.EMPLOYEE = E.EMPLOYEE
+LEFT OUTER JOIN (SELECT PR.EMPLOYEE
+,PR.HOURS
+,PR.PAY_SUM_GRP
+,PRC.CHECK_DATE
+FROM INFORDWHR.dbo.INF_PRTIME PR 
+INNER JOIN INFORDWHR.dbo.INF_PRCHECK PRC ON PRC.CHECK_ID = PR.CHECK_ID WHERE PAYROLL_YEAR = 2024 AND PAY_SUM_GRP = 'TCH') PR ON PR.EMPLOYEE = E.EMPLOYEE WHERE (S.OLD_STATUS IN ('FT TEMP','PT CASUAL','PT TEMP','PRN-HCR','PT-HCR','PTCA-HCR','PRN', 'PT TEMP') AND S.NEW_STATUS IN ('FULL TIME','PART TIME','PTBE','WK OPT FT','WEEKEND OPT'))
+
+UNION 
+
+SELECT 'Reset' as 'Transaction'
+              ,E.EMPLOYEE AS 'Person Number'
+              ,CONVERT(VARCHAR,E.DATE_HIRED,101) AS 'Effective Date'
+
+              ,'Take Care' AS 'Accrual Code'
+              ,CASE WHEN E.EMP_STATUS IN ('F1','L1','W1') THEN '8'
+                        WHEN E.EMP_STATUS IN ('L2','L3','L4','L8','P1','P2','P6','W2') THEN '4'
+                        END AS 'Amount'
+              ,'' AS 'Probation Amount'
+            ,E.DATE_HIRED
+            ,CASE WHEN E.DATE_HIRED <> E.ANNIVERS_DATE THEN 'Y'
+                        ELSE 'N'
+                        END AS REHIRE
+              ,E.SCHEDULE AS JOB_FAMILY
+              ,E.EMP_STATUS AS CURRENT_STATUS
+              ,'' AS OLD_STATUS
+              ,'' AS NEW_STATUS
+              ,'' AS NEW_STATUS_EFFECTIVE
+              ,CASE WHEN CONVERT(VARCHAR,E.TERM_DATE,101) = '01/01/1753' THEN ''
+                        ELSE CONVERT(VARCHAR,E.TERM_DATE,101)
+                        END AS TERM
+
+            ,CASE WHEN PR.HOURS IS NULL THEN 0
+                        ELSE PR.HOURS
+                        END AS TCH_HOURS
+            ,CASE WHEN CONVERT(VARCHAR,PR.CHECK_DATE,101) IS NULL THEN ''
+                        ELSE CONVERT(VARCHAR,PR.CHECK_DATE,101)
+                        END AS PAYCHECK_DATE
+
+FROM INFORDWHR.dbo.INF_EMPLOYEE_MASTER E 
+
+LEFT OUTER JOIN (SELECT PR.EMPLOYEE
+                                                               ,PR.HOURS
+                                                               ,PR.PAY_SUM_GRP
+                                                               ,PRC.CHECK_DATE
+                                                            FROM INFORDWHR.dbo.INF_PRTIME PR 
+                                                            INNER JOIN INFORDWHR.dbo.INF_PRCHECK PRC ON PRC.CHECK_ID = PR.CHECK_ID
+                                                            WHERE PAYROLL_YEAR = 2024
+                                                            AND PAY_SUM_GRP = 'TCH') PR ON PR.EMPLOYEE = E.EMPLOYEE 
+
+
+WHERE E.DATE_HIRED BETWEEN @PROCESSBEG AND @PROCESSEND
+            AND E.EMP_STATUS IN ('F1','L1','W1','L2','L3','L4','L8','P1','P2','P6','W1','W2')
+            AND E.SCHEDULE <> 'RES/FELLO'
+
+
+
+
+IF OBJECT_ID ('tempdb..#JOBCODE') IS NOT NULL drop table #JOBCODE
+
+
+DECLARE @PROCESSBEG1 DATE
+SET @PROCESSBEG = DATEADD(DAY, -14, CAST(GETDATE() AS DATE));
+DECLARE @PROCESSEND1 DATE
+SET @PROCESSEND = DATEADD(DAY, 0, CAST(GETDATE() AS DATE));
+WITH 
+
+HRJ AS 
+            (SELECT HIST.EMPLOYEE
+                        ,HIST.A_VALUE
+                        ,JC.DESCRIPTION
+                        ,HIST.BEG_DATE
+                        ,HIST.DATE_STAMP
+                        ,HIST.TIME_STAMP
+                        ,ROW_NUMBER () OVER (PARTITION BY HIST.EMPLOYEE ORDER BY HIST.DATE_STAMP DESC, HIST.TIME_STAMP DESC) AS ROW_NUM
+
+            FROM INFORDWHR.dbo.INF_HRHISTORY HIST
+            INNER JOIN INFORDWHR.dbo.INF_JOBCODE JC ON JC.JOB_CODE = HIST.A_VALUE
+            WHERE HIST.FLD_NBR = '19'
+            AND HIST.A_VALUE IN (83000,83050,84000,80000)
+            AND HIST.DATE_STAMP <= @PROCESSEND1)
+
+
+
+
+
+
+
+SELECT HRJ.EMPLOYEE
+                        ,RTRIM(EMP.FIRST_NAME) AS FIRST_NAME
+                        ,RTRIM(EMP.LAST_NAME) AS LAST_NAME
+                        ,RTRIM(EMP.EMAIL_ADDRESS) AS EMAIL
+                        ,CONVERT(VARCHAR,EMP.DATE_HIRED,101) AS 'HIRE DATE'
+                        ,CONVERT(VARCHAR,HRJ2.BEG_DATE,101) as 'OLD_JOB_CODE_EFF_DATE'
+                        ,HRJ2.A_VALUE AS 'OLD_JOB_CODE'
+                        ,HRJ2.DESCRIPTION 'OLD_DESC'
+                        ,HRJ.A_VALUE AS 'NEW_JOB_CODE'
+                        ,HRJ.DESCRIPTION AS 'NEW_DESC'
+                        ,CONVERT(VARCHAR,HRJ.BEG_DATE,101) as 'NEW_JOB_CODE_EFF_DATE'
+                        ,CONVERT(VARCHAR,HRJ.DATE_STAMP,101) AS 'PROCESSED_DATE'
+
+INTO #JOBCODE
+
+FROM HRJ
+
+
+INNER JOIN HRJ HRJ2 ON HRJ.EMPLOYEE = HRJ2.EMPLOYEE
+            AND HRJ.DATE_STAMP >= @PROCESSBEG1
+            AND HRJ.DATE_STAMP <= @PROCESSEND1
+            AND HRJ2.ROW_NUM = 2
+            AND HRJ.ROW_NUM = 1
+            AND HRJ.A_VALUE <> HRJ2.A_VALUE
+
+
+INNER JOIN INFORDWHR.dbo.INF_EMPLOYEE_MASTER EMP ON HRJ.EMPLOYEE = EMP.EMPLOYEE
+
+
+
+
+SELECT 'Reset' as 'Transaction'
+              ,E.EMPLOYEE AS 'Person Number'
+              ,CONVERT(VARCHAR,E.DATE_HIRED,101) AS 'Effective Date'
+              ,'Take Care' AS 'Accrual Code'
+              ,CASE WHEN E.EMP_STATUS IN ('F1','L1','W1') THEN '8'
+                        WHEN E.EMP_STATUS IN ('L2','L3','L4','L8','P1','P2','P6','W1','W2') THEN '4'
+                        END AS 'Amount'
+              ,'' AS 'Probation Amount'
+              ,CONVERT(VARCHAR,E.DATE_HIRED,101) AS DATE_HIRED
+            ,CASE WHEN E.DATE_HIRED <> E.ANNIVERS_DATE THEN 'Y'
+                        ELSE 'N'
+                        END AS REHIRE
+              ,E.SCHEDULE AS JOB_FAMILY
+              ,E.EMP_STATUS AS CURRENT_STATUS
+              ,J.OLD_JOB_CODE
+              ,J.NEW_JOB_CODE
+              ,J.NEW_JOB_CODE_EFF_DATE
+              ,CASE WHEN CONVERT(VARCHAR,E.TERM_DATE,101) = '01/01/1753' THEN ''
+                        ELSE CONVERT(VARCHAR,E.TERM_DATE,101)
+                        END AS TERM
+
+            ,CASE WHEN PR.HOURS IS NULL THEN 0
+                        ELSE PR.HOURS
+                        END AS TCH_HOURS
+            ,CASE WHEN CONVERT(VARCHAR,PR.CHECK_DATE,101) IS NULL THEN ''
+                        ELSE CONVERT(VARCHAR,PR.CHECK_DATE,101)
+                        END AS CHECK_DATE
+
+FROM INFORDWHR.dbo.INF_EMPLOYEE_MASTER E 
+
+INNER JOIN #JOBCODE J ON J.EMPLOYEE = E.EMPLOYEE
+
+LEFT OUTER JOIN (SELECT PR.EMPLOYEE
+                                                               ,PR.HOURS
+                                                               ,PR.PAY_SUM_GRP
+                                                               ,PRC.CHECK_DATE
+                                                            FROM INFORDWHR.dbo.INF_PRTIME PR 
+                                                            INNER JOIN INFORDWHR.dbo.INF_PRCHECK PRC ON PRC.CHECK_ID = PR.CHECK_ID
+                                                            WHERE PAYROLL_YEAR = 2024
+                                                            AND PAY_SUM_GRP = 'TCH') PR ON PR.EMPLOYEE = E.EMPLOYEE 
+
+WHERE (J.OLD_JOB_CODE IN (83050,83000,84000)
+                                                                        AND J.NEW_JOB_CODE IN (80000))
+AND E.DATE_HIRED <= GETDATE()
+
+
+
